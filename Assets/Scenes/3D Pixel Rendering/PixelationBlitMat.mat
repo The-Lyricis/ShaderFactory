@@ -103,7 +103,7 @@ Material:
     - _ClearCoatSmoothness: 0
     - _Cull: 2
     - _Cutoff: 0.5
-    - _DebugView: 0
+    - _DebugView: 0.33
     - _DepthStrength: 0.88
     - _DepthThreshold: 0.0127
     - _DetailAlbedoMapScale: 1

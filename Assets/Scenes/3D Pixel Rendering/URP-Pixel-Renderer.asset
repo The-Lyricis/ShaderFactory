@@ -136,7 +136,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   m_Active: 1
   settings:
-    targetHeight: 180
+    targetHeight: 270
     overscanPixels: 1
     layerMask:
       serializedVersion: 2
