@@ -14,7 +14,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   m_Active: 0
   settings:
-    targetHeight: 180
+    targetHeight: 270
     overscanPixels: 1
     blitMaterial: {fileID: 2100000, guid: a25737eeabbb5c64591fe3fac83a2051, type: 2}
     passEvent: 500
