@@ -7,20 +7,23 @@ Shader "Pixel/PixelationBlit_URP"
         [Toggle] _EnableDepthOutline   ("Enable Depth Outline", Float) = 1
         _DepthThreshold        ("Depth Threshold", Range(0.0001, 0.2)) = 0.003
         _DepthStrength         ("Depth Strength", Range(0, 1)) = 0.85
-        // Darken amount for silhouette: 0 = no darkening, 1 = fully black
         _DepthDarkenAmount     ("Depth Darken Amount", Range(0, 1)) = 0.65
+
+        // Optional: smoothing width for depth edge (screen-stable)
+        _DepthEdgeSoftness     ("Depth Edge Softness", Range(0.0, 0.2)) = 0.03
 
         // --- Normal outline (internal edges) ---
         [Header(Normal Outline Settings)]
         [Toggle] _EnableNormalOutline  ("Enable Normal Outline", Float) = 1
-        _NormalThreshold       ("Normal Threshold", Range(0.01, 1.0)) = 0.18
+        _NormalThreshold       ("Normal Threshold", Range(0.0001, 1.0)) = 0.18
         _NormalStrength        ("Normal Strength", Range(0, 1)) = 0.25
-        // Lighten amount for internal edges: 0 = no lightening, 1 = fully white
         _NormalLightenAmount   ("Normal Lighten Amount", Range(0, 1)) = 0.35
+
+        // Optional: smoothing width for normal edge
+        _NormalEdgeSoftness    ("Normal Edge Softness", Range(0.0, 0.5)) = 0.08
 
         // --- Debug Tools ---
         [Header(Debug Tools)]
-        // KeywordEnum creates a professional dropdown menu
         [KeywordEnum(Final, Normals, Depth)] _DebugView ("Debug Mode", Float) = 0
     }
 
@@ -41,34 +44,28 @@ Shader "Pixel/PixelationBlit_URP"
 
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
 
-            // Low-res buffers produced by the renderer feature
             TEXTURE2D(_MainTex);
             TEXTURE2D(_PixelDepthTex);
             TEXTURE2D(_PixelNormalTex);
 
-            // Nearest-neighbor sampling to preserve pixel grid
             SAMPLER(sampler_PointClamp);
 
-            // Visible pixel grid (no overscan), e.g. 640x360
             float2 _VisibleSize;
-            // Low-res RT size (with overscan), e.g. (Pw+2o, Ph+2o)
             float2 _LowResSize;
-            // Overscan pixels (usually 1,1)
             float2 _OverscanPixels;
-            // Subpixel camera compensation in pixel units
             float4 _SubPixelOffsetPixels;
 
-            // Depth outline
             float _EnableDepthOutline;
             float _DepthThreshold;
             float _DepthStrength;
             float _DepthDarkenAmount;
+            float _DepthEdgeSoftness;
 
-            // Normal outline
             float _EnableNormalOutline;
             float _NormalThreshold;
             float _NormalStrength;
             float _NormalLightenAmount;
+            float _NormalEdgeSoftness;
 
             float _DebugView;
 
@@ -93,7 +90,21 @@ Shader "Pixel/PixelationBlit_URP"
             }
 
             // -----------------------------
-            // Depth helpers (Linear01)
+            // Pixel-grid mapping
+            // -----------------------------
+            float2 ComputeLowResUV(float2 screenUV, out float2 uvMin, out float2 uvMax)
+            {
+                float2 pixel = floor(screenUV * _VisibleSize);
+                float2 samplePixel = pixel + _OverscanPixels + 0.5 - _SubPixelOffsetPixels.xy;
+                float2 uvLow = samplePixel / _LowResSize;
+
+                uvMin = _OverscanPixels / _LowResSize;
+                uvMax = (_VisibleSize + _OverscanPixels) / _LowResSize;
+                return clamp(uvLow, uvMin, uvMax);
+            }
+
+            // -----------------------------
+            // Depth helpers
             // -----------------------------
             float Depth01(float2 uv)
             {
@@ -101,28 +112,43 @@ Shader "Pixel/PixelationBlit_URP"
                 return Linear01Depth(raw, _ZBufferParams);
             }
 
-            // Sobel 3x3 edge detector on Linear01 depth (binary output 0/1)
-            float SobelDepthEdge01(float2 uv, float2 texel, float threshold)
+            // This tends to represent silhouette / discontinuities.
+            float DepthEdgePos(float dC, float dU, float dD, float dL, float dR)
             {
-                float d00 = Depth01(uv + texel * float2(-1,  1));
-                float d10 = Depth01(uv + texel * float2( 0,  1));
-                float d20 = Depth01(uv + texel * float2( 1,  1));
-                float d01 = Depth01(uv + texel * float2(-1,  0));
-                float d11 = Depth01(uv + texel * float2( 0,  0));
-                float d21 = Depth01(uv + texel * float2( 1,  0));
-                float d02 = Depth01(uv + texel * float2(-1, -1));
-                float d12 = Depth01(uv + texel * float2( 0, -1));
-                float d22 = Depth01(uv + texel * float2( 1, -1));
+                float edge = 0.0;
 
-                float gx = (-1*d00 + 1*d20) + (-2*d01 + 2*d21) + (-1*d02 + 1*d22);
-                float gy = ( 1*d00 + 2*d10 + 1*d20) + (-1*d02 - 2*d12 - 1*d22);
+                edge += saturate(dU - dC);
+                edge += saturate(dD - dC);
+                edge += saturate(dL - dC);
+                edge += saturate(dR - dC);
+                return edge; // 0..4
+            }
 
-                float g = abs(gx) + abs(gy);
-                return step(threshold, g);
+            // Used to suppress internal highlights near silhouette / occlusion.
+            float DepthEdgeNeg(float dC, float dU, float dD, float dL, float dR)
+            {
+                float neg = 0.0;
+                neg += saturate(dC - dU);
+                neg += saturate(dC - dD);
+                neg += saturate(dC - dL);
+                neg += saturate(dC - dR);
+                return neg; // 0..4
+            }
+
+            // Convert an accumulated edge response into a stable 0..1 mask
+            float EdgeMask(float edgeAccum, float threshold, float softness)
+            {
+                // Normalize (0..4) -> (0..1)
+                float e = edgeAccum * 0.25;
+
+                // Soft threshold (more stable than step)
+                float a = threshold * (1.0 - softness);
+                float b = threshold * (1.0 + softness);
+                return smoothstep(a, b, e);
             }
 
             // -----------------------------
-            // Normal helpers (decode + edge)
+            // Normal helpers
             // -----------------------------
             float3 NormalWS(float2 uv)
             {
@@ -130,32 +156,15 @@ Shader "Pixel/PixelationBlit_URP"
                 return normalize(enc * 2.0 - 1.0);
             }
 
-            // Stable normal edge metric: 1 - dot(nC, nNeighbor)
-            float NormalEdge01(float2 uvC, float2 uvR, float2 uvU, float threshold)
+            //normalIndicator: use dot difference + depth gate
+            float NormalIndicator(float3 baseN, float3 newN)
             {
-                float3 nC = NormalWS(uvC);
-                float3 nR = NormalWS(uvR);
-                float3 nU = NormalWS(uvU);
-                float diffR = 1.0 - dot(nC, nR);
-                float diffU = 1.0 - dot(nC, nU);
-                float diff  = max(diffR, diffU);
-                return step(threshold, diff);
+                return saturate(1.0 - dot(baseN, newN));
             }
 
             // -----------------------------
-            // Pixel-grid mapping (screen UV -> low-res UV)
+            // Color application
             // -----------------------------
-            float2 ComputeLowResUV(float2 screenUV, out float2 uvMin, out float2 uvMax)
-            {
-                float2 pixel = floor(screenUV * _VisibleSize);
-                float2 samplePixel = pixel + _OverscanPixels + 0.5 - _SubPixelOffsetPixels.xy;
-                float2 uvLow = samplePixel / _LowResSize;
-                uvMin = _OverscanPixels / _LowResSize;
-                uvMax = (_VisibleSize + _OverscanPixels) / _LowResSize;
-                return clamp(uvLow, uvMin, uvMax);
-            }
-
-            // Apply silhouette outline by darkening the object's own color.
             float3 ApplyDepthDarken(float3 baseRgb, float edge01)
             {
                 float w = saturate(edge01 * _DepthStrength);
@@ -163,12 +172,19 @@ Shader "Pixel/PixelationBlit_URP"
                 return lerp(baseRgb, baseRgb * darkFactor, w);
             }
 
-            // Apply internal outline by lightening the object's own color.
             float3 ApplyNormalLighten(float3 baseRgb, float edge01)
             {
                 float w = saturate(edge01 * _NormalStrength);
                 float a = saturate(_NormalLightenAmount);
-                float3 lightened = baseRgb + (1.0 - baseRgb) * a;
+                
+                // 计算背景的亮度 (Luminance)
+                // 使用标准的灰度权重：0.2126, 0.7152, 0.0722
+                float lum = dot(baseRgb, float3(0.2126, 0.7152, 0.0722));
+                
+                // 关键：让增加的亮度受背景亮度影响
+                // 如果背景是全黑，lum 就是 0，增加的亮度也会变成 0
+                float3 lightened = baseRgb + (1.0 - baseRgb) * a * saturate(lum * 2.0); 
+                
                 return lerp(baseRgb, lightened, w);
             }
 
@@ -177,44 +193,83 @@ Shader "Pixel/PixelationBlit_URP"
                 float2 uvMin, uvMax;
                 float2 uvLow = ComputeLowResUV(i.uv, uvMin, uvMax);
 
-                // --- Debug views handling ---
+                // Debug views
                 if (_DebugView == 1) // Normals
                 {
                     float3 encN = SAMPLE_TEXTURE2D(_PixelNormalTex, sampler_PointClamp, uvLow).rgb;
                     return half4(encN, 1);
                 }
-                if (_DebugView == 2) // Depth
+                if (_DebugView == 2) // Depth (raw)
                 {
                     float raw = SAMPLE_TEXTURE2D(_PixelDepthTex, sampler_PointClamp, uvLow).r;
                     return half4(raw, raw, raw, 1);
                 }
 
-                // --- Base color ---
                 half4 col = SAMPLE_TEXTURE2D(_MainTex, sampler_PointClamp, uvLow);
 
-                // Low-res texel step
-                float2 texelLow = 1.0 / _LowResSize;
-                float2 uvR = clamp(uvLow + float2(texelLow.x, 0.0), uvMin, uvMax);
-                float2 uvU = clamp(uvLow + float2(0.0, texelLow.y), uvMin, uvMax);
+                float2 texel = 1.0 / _LowResSize;
+                float2 uvU = clamp(uvLow + float2(0.0, -texel.y), uvMin, uvMax);
+                float2 uvD = clamp(uvLow + float2(0.0,  texel.y), uvMin, uvMax);
+                float2 uvL = clamp(uvLow + float2(-texel.x, 0.0), uvMin, uvMax);
+                float2 uvR = clamp(uvLow + float2( texel.x, 0.0), uvMin, uvMax);
 
-                // Gate: treat depth ~ 1 as background
+                // Depth samples (Linear01)
                 float dC = Depth01(uvLow);
                 bool hasGeo = (dC < 0.999);
 
+                if (!hasGeo)
+                    return col;
+
+                float dU = Depth01(uvU);
+                float dD = Depth01(uvD);
+                float dL = Depth01(uvL);
+                float dR = Depth01(uvR);
+
+                // --- Depth edge (silhouette) + negative depth mask ---
+                float depthPosAccum = DepthEdgePos(dC, dU, dD, dL, dR); // 0..4
+                float depthNegAccum = DepthEdgeNeg(dC, dU, dD, dL, dR); // 0..4
+
                 float eD = 0.0;
-                // --- Depth silhouette outline ---
-                if (hasGeo && _EnableDepthOutline > 0.5)
+                float negMask = 0.0;
+
+                if (_EnableDepthOutline > 0.5)
                 {
-                    eD = SobelDepthEdge01(uvLow, texelLow, _DepthThreshold);
+                    // Convert to 0..1 edge mask, smooth threshold
+                    eD = EdgeMask(depthPosAccum, _DepthThreshold, _DepthEdgeSoftness);
                     col.rgb = ApplyDepthDarken(col.rgb, eD);
                 }
 
-                // --- Normal internal outline (suppressed on silhouette) ---
-                if (hasGeo && _EnableNormalOutline > 0.5)
+                // Always compute negMask if normals enabled, used to suppress overlaps
+                if (_EnableNormalOutline > 0.5)
                 {
-                    float eN = NormalEdge01(uvLow, uvR, uvU, _NormalThreshold);
-                    // Avoid double-stroking on the silhouette edge
+                    // A small bias makes negMask respond only when there is meaningful occlusion
+                    negMask = EdgeMask(depthNegAccum, _DepthThreshold * 0.75, _DepthEdgeSoftness);
+                }
+
+                // --- Normal edge (internal highlights) ---
+                if (_EnableNormalOutline > 0.5)
+                {
+                    float3 nC = NormalWS(uvLow);
+                    // 只取右方和上方的像素进行对比 (单向对比)
+                    float3 nR = NormalWS(uvR);
+                    float3 nU = NormalWS(uvU);
+
+                    // 计算差异
+                    float diffR = NormalIndicator(nC, nR);
+                    float diffU = NormalIndicator(nC, nU);
+
+                    // 取最大值：这样只有当前的 nC 会因为发现右边或上面不一样而变亮
+                    // 而右边那个像素在计算时，它是对比它的右边，不会回头对比左边
+                    float nEdge = max(diffR, diffU);
+
+                    // 阈值处理
+                    float a = _NormalThreshold;
+                    float b = _NormalThreshold + max(0.01, _NormalEdgeSoftness);
+                    float eN = smoothstep(a, b, nEdge);
+
+                    // 过滤掉深度边缘和背景
                     eN *= (1.0 - eD);
+
                     col.rgb = ApplyNormalLighten(col.rgb, eN);
                 }
 

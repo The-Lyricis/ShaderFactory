@@ -110,14 +110,15 @@ Material:
     - _Cull: 2
     - _Cutoff: 0.5
     - _DebugView: 0
-    - _DepthDarkenAmount: 0.557
-    - _DepthStrength: 0.765
-    - _DepthThreshold: 0.0362
+    - _DepthDarkenAmount: 0.339
+    - _DepthEdgeSoftness: 0.189
+    - _DepthStrength: 0.667
+    - _DepthThreshold: 0.082
     - _DetailAlbedoMapScale: 1
     - _DetailNormalMapScale: 1
     - _DstBlend: 0
     - _DstBlendAlpha: 0
-    - _EnableDepthOutline: 0.65
+    - _EnableDepthOutline: 1
     - _EnableNormalOutline: 1
     - _EnablePosterize: 1
     - _EnvironmentReflections: 1
@@ -125,9 +126,10 @@ Material:
     - _Glossiness: 0
     - _GlossyReflections: 0
     - _Metallic: 0
-    - _NormalLightenAmount: 0.049
-    - _NormalStrength: 0.364
-    - _NormalThreshold: 0.5
+    - _NormalEdgeSoftness: 0.5
+    - _NormalLightenAmount: 0.443
+    - _NormalStrength: 0.302
+    - _NormalThreshold: 0.388
     - _OcclusionStrength: 1
     - _Parallax: 0.005
     - _PosterizationCount: 8
