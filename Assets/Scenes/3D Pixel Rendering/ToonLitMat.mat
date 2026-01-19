@@ -114,7 +114,7 @@ Material:
     - _RimSoftness: 0
     - _RimStrength: 0
     - _RimThreshold: 0
-    - _ShadowDarkness: 0.85
+    - _ShadowDarkness: 0.75
     - _ShadowHardness: 1.2
     - _Smoothness: 0.5
     - _SmoothnessTextureChannel: 0

@@ -8,6 +8,7 @@ Shader "Pixel/PixelationBlit_URP"
         _DepthThreshold        ("Depth Threshold", Range(0.0001, 0.2)) = 0.003
         _DepthStrength         ("Depth Strength", Range(0, 1)) = 0.85
         _DepthDarkenAmount     ("Depth Darken Amount", Range(0, 1)) = 0.65
+        _DepthPower            ("Depth Power", Range(0.1, 10.0)) = 1.0
 
         // Optional: smoothing width for depth edge (screen-stable)
         _DepthEdgeSoftness     ("Depth Edge Softness", Range(0.0, 0.2)) = 0.03
@@ -60,6 +61,7 @@ Shader "Pixel/PixelationBlit_URP"
             float _DepthStrength;
             float _DepthDarkenAmount;
             float _DepthEdgeSoftness;
+            float _DepthPower;
 
             float _EnableNormalOutline;
             float _NormalThreshold;
@@ -108,8 +110,8 @@ Shader "Pixel/PixelationBlit_URP"
             // -----------------------------
             float Depth01(float2 uv)
             {
-                float raw = SAMPLE_TEXTURE2D(_PixelDepthTex, sampler_PointClamp, uv).r;
-                return Linear01Depth(raw, _ZBufferParams);
+                float depth = pow(SAMPLE_TEXTURE2D(_PixelDepthTex, sampler_PointClamp, uv).r, _DepthPower);
+                return Linear01Depth(depth, _ZBufferParams);
             }
 
             // This tends to represent silhouette / discontinuities.
@@ -177,12 +179,10 @@ Shader "Pixel/PixelationBlit_URP"
                 float w = saturate(edge01 * _NormalStrength);
                 float a = saturate(_NormalLightenAmount);
                 
-                // 计算背景的亮度 (Luminance)
-                // 使用标准的灰度权重：0.2126, 0.7152, 0.0722
+                // Calculate luminance
                 float lum = dot(baseRgb, float3(0.2126, 0.7152, 0.0722));
                 
-                // 关键：让增加的亮度受背景亮度影响
-                // 如果背景是全黑，lum 就是 0，增加的亮度也会变成 0
+                // Calculate lightened color
                 float3 lightened = baseRgb + (1.0 - baseRgb) * a * saturate(lum * 2.0); 
                 
                 return lerp(baseRgb, lightened, w);
@@ -201,8 +201,8 @@ Shader "Pixel/PixelationBlit_URP"
                 }
                 if (_DebugView == 2) // Depth (raw)
                 {
-                    float raw = SAMPLE_TEXTURE2D(_PixelDepthTex, sampler_PointClamp, uvLow).r;
-                    return half4(raw, raw, raw, 1);
+                    float  depth= pow(SAMPLE_TEXTURE2D(_PixelDepthTex, sampler_PointClamp, uvLow).r, _DepthPower);
+                    return half4(depth, depth, depth, 1);
                 }
 
                 half4 col = SAMPLE_TEXTURE2D(_MainTex, sampler_PointClamp, uvLow);
@@ -250,24 +250,23 @@ Shader "Pixel/PixelationBlit_URP"
                 if (_EnableNormalOutline > 0.5)
                 {
                     float3 nC = NormalWS(uvLow);
-                    // 只取右方和上方的像素进行对比 (单向对比)
+                    // Only right and up samples to avoid double-counting
                     float3 nR = NormalWS(uvR);
                     float3 nU = NormalWS(uvU);
 
-                    // 计算差异
+                    // Compute normal differences
                     float diffR = NormalIndicator(nC, nR);
                     float diffU = NormalIndicator(nC, nU);
 
-                    // 取最大值：这样只有当前的 nC 会因为发现右边或上面不一样而变亮
-                    // 而右边那个像素在计算时，它是对比它的右边，不会回头对比左边
+                    // Select maximum difference
                     float nEdge = max(diffR, diffU);
 
-                    // 阈值处理
+                    // Threshold with softness
                     float a = _NormalThreshold;
                     float b = _NormalThreshold + max(0.01, _NormalEdgeSoftness);
                     float eN = smoothstep(a, b, nEdge);
 
-                    // 过滤掉深度边缘和背景
+                    // Filter out depth edges and background
                     eN *= (1.0 - eD);
 
                     col.rgb = ApplyNormalLighten(col.rgb, eN);

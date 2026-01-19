@@ -1,4 +1,4 @@
-Shader "Pixel/ToonLit_Complete_URP"
+Shader "Pixel/ToonLit_URP"
 {
     Properties
     {
@@ -269,73 +269,73 @@ Shader "Pixel/ToonLit_Complete_URP"
                     color += (half3)_RimColor.rgb * rimBand * (half)_RimStrength * (half3)mainLight.color;
                 }
 
-// -------------------------------------------------------------
-// Additional Lights (Hard-Quantized, Range-aligned, No Physical Falloff)
-// - Range rings are based on dist/range, so the outer ring matches gizmo range.
-// - Quantization is inclusive inside range (no "missing last band").
-// - No URP distanceAttenuation fade (flat bands).
-// -------------------------------------------------------------
-#if defined(_ADDITIONAL_LIGHTS)
-{
-    uint count = GetAdditionalLightsCount();
-    for (uint li = 0u; li < count; li++)
-    {
-        Light light = GetAdditionalLight(li, IN.positionWS);
+                // -------------------------------------------------------------
+                // Additional Lights (Hard-Quantized, Range-aligned, No Physical Falloff)
+                // - Range rings are based on dist/range, so the outer ring matches gizmo range.
+                // - Quantization is inclusive inside range (no "missing last band").
+                // - No URP distanceAttenuation fade (flat bands).
+                // -------------------------------------------------------------
+                #if defined(_ADDITIONAL_LIGHTS)
+                {
+                    uint count = GetAdditionalLightsCount();
+                    for (uint li = 0u; li < count; li++)
+                    {
+                        Light light = GetAdditionalLight(li, IN.positionWS);
 
-        // --- Diffuse band (angle) ---
-        half3 La = (half3)normalize(light.direction);
-        half diff01   = DiffuseDriver01(N, La);
-        half diffRamp = ToonRamp(diff01, (half)_Steps, (half)_RampSmooth);
+                        // --- Diffuse band (angle) ---
+                        half3 La = (half3)normalize(light.direction);
+                        half diff01   = DiffuseDriver01(N, La);
+                        half diffRamp = ToonRamp(diff01, (half)_Steps, (half)_RampSmooth);
 
-        // Defaults (directional additional lights: no range rings)
-        half rangeRamp = 1.0h;
+                        // Defaults (directional additional lights: no range rings)
+                        half rangeRamp = 1.0h;
 
-        // --- Range rings (dist / range) ---
-        uint lightIndex = GetPerObjectLightIndex(li);
-        float4 posWS = _AdditionalLightsPosition[lightIndex];
-        float4 att   = _AdditionalLightsAttenuation[lightIndex];
+                        // --- Range rings (dist / range) ---
+                        uint lightIndex = GetPerObjectLightIndex(li);
+                        float4 posWS = _AdditionalLightsPosition[lightIndex];
+                        float4 att   = _AdditionalLightsAttenuation[lightIndex];
 
-        if (posWS.w > 0.0) // point/spot
-        {
-            float invRangeSqr = max(att.x, 1e-6);
-            float range = rsqrt(invRangeSqr);
-            float dist  = length(posWS.xyz - IN.positionWS);
+                        if (posWS.w > 0.0) // point/spot
+                        {
+                            float invRangeSqr = max(att.x, 1e-6);
+                            float range = rsqrt(invRangeSqr);
+                            float dist  = length(posWS.xyz - IN.positionWS);
 
-            // 1 at center, 0 at range boundary
-            half radius01 = saturate(1.0h - (half)(dist / range));
+                            // 1 at center, 0 at range boundary
+                            half radius01 = saturate(1.0h - (half)(dist / range));
 
-            // Hard inclusive quantization:
-            // - inside range: minimum band is 1/s (never 0)
-            // - outside range: forced 0
-            half s = max((half)_RangeSteps, 1.0h);
+                            // Hard inclusive quantization:
+                            // - inside range: minimum band is 1/s (never 0)
+                            // - outside range: forced 0
+                            half s = max((half)_RangeSteps, 1.0h);
 
-            // inclusive bands: ceil(x*s)/s gives 1/s..1 inside, 0 when x==0
-            rangeRamp = ceil(radius01 * s) / s;
+                            // inclusive bands: ceil(x*s)/s gives 1/s..1 inside, 0 when x==0
+                            rangeRamp = ceil(radius01 * s) / s;
 
-            // hard cutoff outside range
-            rangeRamp *= (half)step(dist, range);
+                            // hard cutoff outside range
+                            rangeRamp *= (half)step(dist, range);
 
-            // contrast shaping
-            rangeRamp = pow(saturate(rangeRamp), max((half)_RangeContrast, 0.01h));
-        }
+                            // contrast shaping
+                            rangeRamp = pow(saturate(rangeRamp), max((half)_RangeContrast, 0.01h));
+                        }
 
-        // --- Combine angle band and range ring band ---
-        half rampA = diffRamp * rangeRamp;
+                        // --- Combine angle band and range ring band ---
+                        half rampA = diffRamp * rangeRamp;
 
-        // --- Stylized shadow (0 shadow, 1 light) ---
-        half shA = StylizedShadow((half)light.shadowAttenuation);
+                        // --- Stylized shadow (0 shadow, 1 light) ---
+                        half shA = StylizedShadow((half)light.shadowAttenuation);
 
-        // Shadow tint blend
-        half3 litA    = albedo * rampA;
-        half3 shadowA = albedo * (half3)_ShadowTint.rgb;
-        half shadowAmountA = (1.0h - shA) * (half)_ShadowDarkness;
-        half3 diffA   = lerp(litA, shadowA, shadowAmountA);
+                        // Shadow tint blend
+                        half3 litA    = albedo * rampA;
+                        half3 shadowA = albedo * (half3)_ShadowTint.rgb;
+                        half shadowAmountA = (1.0h - shA) * (half)_ShadowDarkness;
+                        half3 diffA   = lerp(litA, shadowA, shadowAmountA);
 
-        // IMPORTANT: keep band strength (do NOT binary-step it)
-        color += diffA * (half3)light.color;
-    }
-}
-#endif
+                        // IMPORTANT: keep band strength (do NOT binary-step it)
+                        color += diffA * (half3)light.color;
+                    }
+                }
+                #endif
 
 
 
