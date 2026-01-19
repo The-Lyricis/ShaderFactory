@@ -126,6 +126,8 @@ MonoBehaviour:
     enableNormals: 1
     normalsOverrideMaterial: {fileID: 2100000, guid: eb765cbab87db314e82d386bb5671f1b,
       type: 2}
-    passEvent: 450
+    renderTransparents: 1
+    lowResPassEvent: 450
+    blitPassEvent: 500
     useCameraBackground: 1
     backgroundColor: {r: 0, g: 0, b: 0, a: 1}
