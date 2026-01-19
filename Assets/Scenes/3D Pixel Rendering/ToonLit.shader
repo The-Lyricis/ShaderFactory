@@ -242,13 +242,16 @@ Shader "Pixel/ToonLit_URP"
                 // Stylized shadow (0 shadow, 1 light)
                 half shadow = StylizedShadow((half)mainLight.shadowAttenuation);
 
-                // Diffuse composition: blend lit toon to shadow tint by shadowAmount
-                half3 litToon   = albedo * ramp;
-                half3 shadowCol = albedo * (half3)_ShadowTint.rgb;
+                half3 litToon = albedo * ramp;
+
+                // Shadow tint blend
+                half3 shadowTint = min((half3)_ShadowTint.rgb, 1.0h.xxx);
+                half3 shadowToon = litToon * shadowTint;
 
                 half shadowAmount = (1.0h - shadow) * (half)_ShadowDarkness;
-                half3 color = lerp(litToon, shadowCol, shadowAmount);
+                half3 color = lerp(litToon, shadowToon, shadowAmount);
                 color *= (half3)mainLight.color;
+
 
                 // Specular (banded). Multiply by shadow to keep highlight mostly in lit region.
                 {
@@ -266,7 +269,9 @@ Shader "Pixel/ToonLit_URP"
                     half rimRaw  = pow(rimBase, (half)_RimPower);
 
                     half rimBand = Band(rimRaw, (half)_RimThreshold, (half)_RimSoftness);
-                    color += (half3)_RimColor.rgb * rimBand * (half)_RimStrength * (half3)mainLight.color;
+                    half rimGate = shadow; // 0=shadow, 1=lit
+                    color += (half3)_RimColor.rgb * rimBand * (half)_RimStrength * rimGate * (half3)mainLight.color;
+
                 }
 
                 // -------------------------------------------------------------
@@ -336,8 +341,6 @@ Shader "Pixel/ToonLit_URP"
                     }
                 }
                 #endif
-
-
 
                 color = MixFog(color, IN.fogFactor);
                 return half4(color, 1.0h);

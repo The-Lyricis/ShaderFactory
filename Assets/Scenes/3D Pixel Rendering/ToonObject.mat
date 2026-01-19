@@ -115,36 +115,36 @@ Material:
     - _OcclusionStrength: 1
     - _Parallax: 0.005
     - _QueueOffset: 0
-    - _RampSmooth: 0.05
-    - _RangeContrast: 2.5
-    - _RangeSteps: 6
+    - _RampSmooth: 0.51
+    - _RangeContrast: 2.27
+    - _RangeSteps: 7.6
     - _ReceiveShadows: 1
-    - _RimPower: 2
-    - _RimSoftness: 0.12
-    - _RimStrength: 0.25
-    - _RimThreshold: 0.3
-    - _ShadowDarkness: 0.65
-    - _ShadowHardness: 2
+    - _RimPower: 0.5
+    - _RimSoftness: 0
+    - _RimStrength: 0
+    - _RimThreshold: 0
+    - _ShadowDarkness: 1
+    - _ShadowHardness: 1.86
     - _Smoothness: 0.5
     - _SmoothnessTextureChannel: 0
-    - _SpecPower: 32
-    - _SpecSoftness: 0.08
-    - _SpecStrength: 0.2
-    - _SpecThreshold: 0.5
+    - _SpecPower: 56.5
+    - _SpecSoftness: 0
+    - _SpecStrength: 0
+    - _SpecThreshold: 0
     - _SpecularHighlights: 1
     - _SrcBlend: 1
     - _SrcBlendAlpha: 1
-    - _Steepness: 1
-    - _Steps: 3
+    - _Steepness: 0.5
+    - _Steps: 3.23
     - _Surface: 0
     - _WorkflowMode: 1
-    - _Wrap: 0
+    - _Wrap: -0.11
     - _ZWrite: 1
     m_Colors:
-    - _BaseColor: {r: 0.37106913, g: 0.37106913, b: 0.37106913, a: 1}
+    - _BaseColor: {r: 0.31743202, g: 0.61040413, b: 0.9433962, a: 1}
     - _Color: {r: 1, g: 1, b: 1, a: 1}
     - _EmissionColor: {r: 0, g: 0, b: 0, a: 1}
     - _RimColor: {r: 1, g: 1, b: 1, a: 1}
-    - _ShadowTint: {r: 0.5, g: 0.5, b: 0.6, a: 1}
+    - _ShadowTint: {r: 0.7902179, g: 0.7902179, b: 0.8238993, a: 1}
     - _SpecColor: {r: 0.19999996, g: 0.19999996, b: 0.19999996, a: 1}
   m_BuildTextureStacks: []
