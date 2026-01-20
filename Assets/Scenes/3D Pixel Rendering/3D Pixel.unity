@@ -859,6 +859,11 @@ PrefabInstance:
       propertyPath: m_Name
       value: campfire-pit
       objectReference: {fileID: 0}
+    - target: {fileID: 8967936297961072905, guid: d297be0b0dc9ec14a9fa647beb7a4086,
+        type: 3}
+      propertyPath: m_Materials.Array.data[0]
+      value: 
+      objectReference: {fileID: 2100000, guid: be3fd007fc8320a4aaeccd681c302664, type: 2}
     m_RemovedComponents: []
     m_RemovedGameObjects: []
     m_AddedGameObjects: []
@@ -1890,7 +1895,7 @@ PrefabInstance:
     - target: {fileID: -8679921383154817045, guid: 94b457d0e3e7dd74997439c3df1446aa,
         type: 3}
       propertyPath: m_LocalPosition.x
-      value: -6.57
+      value: -4.02
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 94b457d0e3e7dd74997439c3df1446aa,
         type: 3}
@@ -1900,7 +1905,7 @@ PrefabInstance:
     - target: {fileID: -8679921383154817045, guid: 94b457d0e3e7dd74997439c3df1446aa,
         type: 3}
       propertyPath: m_LocalPosition.z
-      value: 5.96
+      value: 5.12
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: 94b457d0e3e7dd74997439c3df1446aa,
         type: 3}
@@ -2286,7 +2291,7 @@ PrefabInstance:
     - target: {fileID: -8679921383154817045, guid: c0152d8ecc1026143968b4bc224892d7,
         type: 3}
       propertyPath: m_LocalPosition.x
-      value: -6.57
+      value: -4.02
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: c0152d8ecc1026143968b4bc224892d7,
         type: 3}
@@ -2296,7 +2301,7 @@ PrefabInstance:
     - target: {fileID: -8679921383154817045, guid: c0152d8ecc1026143968b4bc224892d7,
         type: 3}
       propertyPath: m_LocalPosition.z
-      value: 5.96
+      value: 5.12
       objectReference: {fileID: 0}
     - target: {fileID: -8679921383154817045, guid: c0152d8ecc1026143968b4bc224892d7,
         type: 3}
@@ -2431,7 +2436,7 @@ MeshRenderer:
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 2100000, guid: 5e94139669d13f949b5cc7800c46b1a7, type: 2}
+  - {fileID: 2100000, guid: c934758cd616cf249b6fc7c83a072ab6, type: 2}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
