@@ -127,6 +127,12 @@ MonoBehaviour:
     normalsOverrideMaterial: {fileID: 2100000, guid: eb765cbab87db314e82d386bb5671f1b,
       type: 2}
     renderTransparents: 1
+    transparentWriteDepth: 1
+    transparentWriteNormals: 1
+    crystalLayerMask:
+      serializedVersion: 2
+      m_Bits: 0
+    enableCrystalBackface: 1
     lowResPassEvent: 450
     blitPassEvent: 500
     useCameraBackground: 1

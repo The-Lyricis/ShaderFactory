@@ -115,7 +115,7 @@ Material:
     - _DepthEdgeSoftness: 0.189
     - _DepthPower: 4
     - _DepthStrength: 0.734
-    - _DepthThreshold: 0.001
+    - _DepthThreshold: 0.0001
     - _DetailAlbedoMapScale: 1
     - _DetailNormalMapScale: 1
     - _DstBlend: 0
@@ -137,8 +137,8 @@ Material:
     - _NormalDepthGate: 0.006
     - _NormalDepthGateFarMul: 2
     - _NormalEdgeSoftness: 0.5
-    - _NormalLightenAmount: 0.223
-    - _NormalStrength: 0.55
+    - _NormalLightenAmount: 0.13
+    - _NormalStrength: 0.83
     - _NormalThreshold: 0.0001
     - _OcclusionStrength: 1
     - _Parallax: 0.005
