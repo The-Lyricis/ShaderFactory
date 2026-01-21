@@ -152,16 +152,16 @@ Shader "Pixel/ToonLit_URP"
             {
                 half s = max(steps, 1.0h);
                 
-                // 映射 radius01 (1->0) 
-                // 使用 floor 让阶梯向外扩散，+1.0/s 确保中心最亮
-                // 或者简单的：
+                // Map radius01 (1 -> 0).
+                // Use floor so bands expand outward; +1.0/s keeps the center brightest.
+                // Or use the simpler approach:
                 half q = floor(saturate(radius01) * s) / (s - 1.0h); 
                 
-                // 如果你希望最外圈是可见的，且刚好消失在 range 边界：
-                // 我们使用饱和度调整，确保 0 处确实是 0
+                // If you want the outer ring visible and it disappears at the range boundary:
+                // Use saturation to ensure it reaches 0 at the edge.
                 q = saturate(q);
 
-                // 对比度增强
+                // Contrast boost.
                 q = pow(q, max(contrast, 0.001h));
                 return q;
             }

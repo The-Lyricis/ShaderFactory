@@ -121,7 +121,7 @@ MonoBehaviour:
     overscanPixels: 1
     layerMask:
       serializedVersion: 2
-      m_Bits: 4294967295
+      m_Bits: 39
     blitMaterial: {fileID: 2100000, guid: a25737eeabbb5c64591fe3fac83a2051, type: 2}
     enableNormals: 1
     normalsOverrideMaterial: {fileID: 2100000, guid: eb765cbab87db314e82d386bb5671f1b,
@@ -129,10 +129,13 @@ MonoBehaviour:
     renderTransparents: 1
     transparentWriteDepth: 1
     transparentWriteNormals: 1
+    enableCrystalBackface: 1
     crystalLayerMask:
       serializedVersion: 2
-      m_Bits: 0
-    enableCrystalBackface: 1
+      m_Bits: 64
+    transparentLayerMask:
+      serializedVersion: 2
+      m_Bits: 64
     lowResPassEvent: 450
     blitPassEvent: 500
     useCameraBackground: 1

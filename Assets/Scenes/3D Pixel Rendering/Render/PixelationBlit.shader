@@ -244,7 +244,7 @@ Shader "Pixel/PixelationBlit_URP"
                 {
                     float3 nC = NormalWS(uvLow);
                     
-                    // 采样左侧和下方的邻居（与 uvR/uvU 相反的方向，有助于将边留在物体内）
+                    // Sample left and down neighbors (opposite of uvR/uvU) to keep edges inside the object.
                     float2 uvL_N = clamp(uvLow + float2(-texel.x, 0.0), uvMin, uvMax);
                     float2 uvD_N = clamp(uvLow + float2(0.0,  texel.y), uvMin, uvMax);
                     
@@ -253,28 +253,28 @@ Shader "Pixel/PixelationBlit_URP"
                     float dL_N = Depth01(uvL_N);
                     float dD_N = Depth01(uvD_N);
 
-                    // 计算法线差异
+                    // Compute normal differences.
                     float diffL = NormalIndicator(nC, nL);
                     float diffD = NormalIndicator(nC, nD);
 
-                    // --- 关键：深度门禁 (Depth Gate) ---
-                    // 只有当邻居像素和中心像素的深度非常接近时，才认为这是“物体内部”的折角
-                    // 否则，这通常是物体的外轮廓边缘
+                    // --- Key: depth gate ---
+                    // Treat as internal corner only when neighbor depth is very close to center depth.
+                    // Otherwise this is usually the outer silhouette edge.
                     float distThreshold = _DepthThreshold * 2.0; 
                     float maskL = step(abs(dC - dL_N), distThreshold);
                     float maskD = step(abs(dC - dD_N), distThreshold);
 
                     float nEdge = max(diffL * maskL, diffD * maskD);
 
-                    // 阈值与平滑
+                    // Threshold and smoothing.
                     float a = _NormalThreshold;
                     float b = _NormalThreshold + max(0.01, _NormalEdgeSoftness);
                     float eN = smoothstep(a, b, nEdge);
 
-                    // 排除掉已经被识别为外轮廓 (eD) 的像素
+                    // Exclude pixels already classified as silhouette (eD).
                     eN *= (1.0 - eD);
                     
-                    // 进一步确保不会在背景（天空）绘制
+                    // Also avoid drawing on background (sky).
                     eN *= hasGeo ? 1.0 : 0.0;
 
                     col.rgb = ApplyNormalLighten(col.rgb, eN);

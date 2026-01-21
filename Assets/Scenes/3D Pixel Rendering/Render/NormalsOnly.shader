@@ -7,7 +7,7 @@ Shader "Pixel/NormalsOnly_URP"
         Pass
         {
             Name "NormalsOnly"
-            Tags { "LightMode"="UniversalForward" } // 让 DrawRenderers 的 ShaderTag 能匹配到
+            Tags { "LightMode"="UniversalForward" } // Match DrawRenderers ShaderTag.
 
             ZWrite Off
             ZTest LEqual

@@ -1,14 +1,14 @@
-// LowResOpaquePass：画不透明到低分辨率 color+depth
+// LowResOpaquePass: render opaques into low-res color + depth.
 
-// CrystalBackfacePass：把水晶的背面 Pass 叠加到低分辨率 color（使用已有 depth 做遮挡）
+// CrystalBackfacePass: composite crystal backfaces into low-res color (depth-tested).
 
-// TransparentDepthPass：把透明物体 DepthOnly 写入 lowRes depth（可选）
+// TransparentDepthPass: write transparent DepthOnly into low-res depth (optional).
 
-// NormalsPass / TransparentNormalsPass：写 lowRes normal（可选）
+// NormalsPass / TransparentNormalsPass: write low-res normals (optional).
 
-// TransparentColorPass：把透明颜色画进 lowRes color（可选）
+// TransparentColorPass: render transparent color into low-res color (optional).
 
-// FinalBlitPass：把 lowRes 结果输出到屏幕，并用 depth/normal 做描边
+// FinalBlitPass: blit the low-res result to screen and use depth/normal outlines.
 
 using System.Collections.Generic;
 using UnityEngine;
@@ -54,6 +54,9 @@ public class PixelLowResRenderFeature : ScriptableRendererFeature
 
         [Tooltip("Only objects in this layer mask will draw LightMode=CrystalBack.")]
         public LayerMask crystalLayerMask = 0;
+
+        [Header("Transparent layer mask (rendered into low-res)")]
+        public LayerMask transparentLayerMask = ~0;
 
         [Header("Pass Events")]
         // Build low-res buffers after URP opaques, before URP transparents
@@ -120,14 +123,14 @@ public class PixelLowResRenderFeature : ScriptableRendererFeature
         var cam = cd.camera;
         if (cam == null) return true;
 
-        // 只处理 Game Camera（避免 Preview/SceneView 造成“看似递归”的多次执行）
+        // Only handle the Game camera to avoid Preview/SceneView re-entry.
         if (cam.cameraType != CameraType.Game) return true;
         if (cd.isSceneViewCamera) return true;
 
-        // 排除 Overlay / Stack（防护便宜但收益极大）
+        // Skip overlay/stack cameras.
         if (cd.renderType != CameraRenderType.Base) return true;
 
-        // 排除渲染到 RT 的相机（探针/预览等）
+        // Skip cameras rendering to RTs (probes, previews).
         if (cam.targetTexture != null) return true;
 
         return false;
@@ -158,7 +161,7 @@ public class PixelLowResRenderFeature : ScriptableRendererFeature
 
             // Refresh filtering every frame (supports inspector edits)
             _sh.filteringOpaque      = new FilteringSettings(RenderQueueRange.opaque, _s.layerMask);
-            _sh.filteringTransparent = new FilteringSettings(RenderQueueRange.transparent, _s.layerMask);
+            _sh.filteringTransparent = new FilteringSettings(RenderQueueRange.transparent, _s.transparentLayerMask);
             _sh.filteringCrystalBack = new FilteringSettings(RenderQueueRange.transparent, _s.crystalLayerMask);
 
             // Compute sizes
@@ -202,7 +205,7 @@ public class PixelLowResRenderFeature : ScriptableRendererFeature
                 );
                 cmd.ClearRenderTarget(true, true, _sh.clearColor);
 
-                // 让后续 pass / shader 可见（这里就绑定一次，后面也会重复绑定确保稳定）
+                // Optional: bind low-res targets as globals for later passes.
                 // cmd.SetGlobalTexture("_PixelLowResColorTex", _sh.LowResColorId);
                 // cmd.SetGlobalTexture("_PixelDepthTex", _sh.LowResDepthId);
 
@@ -213,7 +216,7 @@ public class PixelLowResRenderFeature : ScriptableRendererFeature
                 var drawing = CreateDrawingSettings(_sh.ForwardTags, ref renderingData, SortingCriteria.CommonOpaque);
                 context.DrawRenderers(renderingData.cullResults, ref drawing, ref _sh.filteringOpaque, ref _sh.stateBlock);
 
-                // 再绑定一次：避免被其它 pass 改写全局纹理槽位导致“读到空”
+                // Optional: rebind globals to guard against overrides.
                 // cmd.SetGlobalTexture("_PixelLowResColorTex", _sh.LowResColorId);
                 // cmd.SetGlobalTexture("_PixelDepthTex", _sh.LowResDepthId);
                 context.ExecuteCommandBuffer(cmd);
@@ -248,7 +251,7 @@ public class PixelLowResRenderFeature : ScriptableRendererFeature
             CommandBuffer cmd = CommandBufferPool.Get("PixelLowResCrystalBackfaceColorPass");
             using (new ProfilingScope(cmd, _ps))
             {
-                // 复用 low-res 的 color + depth（depth 此时来自 opaque 或后续透明 depth）
+                // Reuse low-res color + depth (depth from opaque or transparent passes).
                 cmd.SetRenderTarget(
                     _sh.LowResColorId, RenderBufferLoadAction.Load, RenderBufferStoreAction.Store,
                     _sh.LowResDepthId, RenderBufferLoadAction.Load, RenderBufferStoreAction.Store
@@ -260,7 +263,7 @@ public class PixelLowResRenderFeature : ScriptableRendererFeature
                 var drawing = CreateDrawingSettings(_sh.CrystalBackTags, ref renderingData, SortingCriteria.CommonTransparent);
                 context.DrawRenderers(renderingData.cullResults, ref drawing, ref _sh.filteringCrystalBack, ref _sh.stateBlock);
 
-                // 维持全局一致
+                // Optional: keep global bindings stable.
                 // cmd.SetGlobalTexture("_PixelLowResColorTex", _sh.LowResColorId);
                 // cmd.SetGlobalTexture("_PixelDepthTex", _sh.LowResDepthId);
                 context.ExecuteCommandBuffer(cmd);
@@ -432,6 +435,7 @@ public class PixelLowResRenderFeature : ScriptableRendererFeature
             _s = s;
             _sh = sh;
             renderPassEvent = s.lowResPassEvent;
+            ConfigureInput(ScriptableRenderPassInput.Color);
         }
 
         public override void Execute(ScriptableRenderContext context, ref RenderingData renderingData)
@@ -485,10 +489,10 @@ public class PixelLowResRenderFeature : ScriptableRendererFeature
             if (ShouldSkipCamera(ref renderingData)) return;
             if (!_sh.allocatedThisFrame) return;
 
-            // 重要提醒：
-            // 如果你把 blitMaterial (PixelationBlit.shader) 赋给了场景里的任意 MeshRenderer，
-            // 并且该物体在 layerMask 内，那么它会被 LowRes Pass 再次渲染 -> 产生反馈/闪烁/看似递归。
-            // 正确用法：该材质只用于这里的全屏 Blit，不要出现在场景物体上。
+            // Important: use blitMaterial only for the full-screen blit.
+            // If you assign it to a scene MeshRenderer within layerMask,
+            // it will be rendered again by the low-res passes and cause feedback.
+            // Correct usage: keep this material only for the full-screen blit.
 
             CommandBuffer cmd = CommandBufferPool.Get("PixelFinalBlitPass");
             using (new ProfilingScope(cmd, _ps))
@@ -503,14 +507,14 @@ public class PixelLowResRenderFeature : ScriptableRendererFeature
                 cmd.SetGlobalVector("_LowResSize",  new Vector4(_sh.lowW, _sh.lowH, 0, 0));
                 cmd.SetGlobalVector("_OverscanPixels", new Vector4(_sh.overscan, _sh.overscan, 0, 0));
 
-                // 强化绑定：在 blit 前再次显式绑定（避免被别的 pass 覆盖）
+                // Rebind globals before blit to avoid other pass overrides.
 
                 cmd.SetGlobalTexture("_PixelDepthTex", _sh.LowResDepthId);
                 if (_s.enableNormals && _s.normalsOverrideMaterial != null)
                     cmd.SetGlobalTexture("_PixelNormalTex", _sh.LowResNormalId);
 
-                // Blit 会自动把 source 绑定到材质的 _MainTex
-                                cmd.SetGlobalTexture("_MainTex", _sh.LowResColorId);
+                // Blit binds the source to _MainTex.
+                cmd.SetGlobalTexture("_MainTex", _sh.LowResColorId);
                 Blit(cmd, _sh.LowResColorId, cameraColorId, _s.blitMaterial);
 
                 // Release
@@ -559,7 +563,7 @@ public class PixelLowResRenderFeature : ScriptableRendererFeature
         if (settings.blitMaterial == null) return;
         if (ShouldSkipCamera(ref renderingData)) return;
 
-        // 同一 RenderPassEvent 下 Enqueue 顺序即执行顺序
+        // Within the same RenderPassEvent, enqueue order is execution order.
         renderer.EnqueuePass(_opaquePass);
 
         if (settings.enableCrystalBackface)

@@ -32,10 +32,26 @@ public class PixelSnapOrthoCamera : MonoBehaviour
     public Vector2 SubPixelOffsetPixels { get; private set; }
 
     Camera _cam;
+    UnityEngine.Rendering.Universal.UniversalAdditionalCameraData _data;
 
     void Awake()
     {
         _cam = GetComponent<Camera>();
+        _data = _cam.GetComponent<UnityEngine.Rendering.Universal.UniversalAdditionalCameraData>();
+    }
+
+    void OnEnable()
+    {
+        if (!_cam) return;
+
+        if (!_data) return;
+
+        // Force depth texture so URP generates _CameraDepthTexture.
+        _data.requiresDepthTexture = true;
+        Debug.LogWarning("[PixelSnapOrthoCamera] Enabled requiresDepthTexture on URP Additional Camera Data.");
+
+        // Enable opaque texture if you need refraction sampling.
+        _data.requiresColorTexture = true;
     }
 
     void LateUpdate()
