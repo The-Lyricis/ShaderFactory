@@ -7,11 +7,13 @@ Shader "Pixel/CrystalToon_URP"
         _BaseColor("Crystal Tint", Color) = (1,1,1,1)
 
         [Header(Transparency Fresnel)]
-        _Opacity("Opacity (Surface Mix)", Range(0, 1)) = 0.55
+        _Opacity("Opacity (Overall Alpha)", Range(0, 1)) = 0.55
+        _SurfaceWeight("Surface Weight (Lit vs Refract)", Range(0, 1)) = 0.55
         _FresnelPower("Fresnel Power", Range(0.5, 10)) = 4
         _FresnelStrength("Fresnel Strength", Range(0, 2)) = 1.0
 
         [Header(Refraction)]
+        [Toggle(_CRYSTAL_USE_SCENECOLOR)] _UseSceneColor("Use Scene Color Refraction", Float) = 1
         _RefractionStrength("Refraction Strength", Range(0, 0.2)) = 0.05
         _ChromaticAberration("Chromatic Aberration", Range(0, 0.05)) = 0.01
         [Toggle(_CRYSTAL_ABERRATION)] _EnableAberration("Enable Aberration (3x Scene Samples)", Float) = 0
@@ -46,7 +48,6 @@ Shader "Pixel/CrystalToon_URP"
         _SpecPower("Specular Power", Range(1,128)) = 64
         _SpecThreshold("Spec Threshold", Range(0,1)) = 0.6
 
-        [Toggle(_CRYSTAL_USE_SCENECOLOR)] _UseSceneColor("Use Scene Color Refraction", Float) = 1
         _ReflectionStrength("Env Reflection Strength", Range(0, 2)) = 0.8
         _Roughness("Reflection Roughness", Range(0,1)) = 0.15
 
@@ -69,21 +70,20 @@ Shader "Pixel/CrystalToon_URP"
         }
 
         HLSLINCLUDE
-        // Keep only declarations/common helpers; avoid includes like Fog.hlsl that can re-define.
+        #pragma target 3.0
         #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
 
         // -------- Shared textures/samplers --------
         TEXTURE2D(_BaseMap);  SAMPLER(sampler_BaseMap);
         TEXTURE2D(_FacetMap); SAMPLER(sampler_FacetMap);
 
-        // -------- Shared material CBUFFER --------
-        // Shared uniforms for ForwardLit and CrystalBack.
-        // Extra fields are ok (unused ones get stripped), missing ones will cause errors.
+        // -------- Shared material CBUFFER (ForwardLit & CrystalBack 共用) --------
         CBUFFER_START(UnityPerMaterial)
             float4 _BaseMap_ST;
             float4 _BaseColor;
 
             float _Opacity;
+            float _SurfaceWeight;
             float _FresnelPower;
             float _FresnelStrength;
 
@@ -124,7 +124,7 @@ Shader "Pixel/CrystalToon_URP"
             float _ZWriteInForward;
         CBUFFER_END
 
-        // -------- Shared helper functions --------
+        // -------- Helpers --------
         half ToonRamp(half x, half steps, half smooth)
         {
             half s  = max(steps, 1.0h);
@@ -139,7 +139,12 @@ Shader "Pixel/CrystalToon_URP"
             return lerp(q0, q1, k);
         }
 
-        // Triplanar facet sampling (CrystalBack/ForwardLit).
+        // faster-ish pow for [0,1]
+        half PowFast01(half a, half p)
+        {
+            return exp2(p * log2(max(a, 1e-4h)));
+        }
+
         half SampleFacetTriplanar(float3 posWS, float3 nWS)
         {
             float3 w = pow(abs(nWS), 6.0);
@@ -155,11 +160,16 @@ Shader "Pixel/CrystalToon_URP"
 
             return fx * w.x + fy * w.y + fz * w.z;
         }
+
+        half LightEnergy01(half3 c)
+        {
+            return saturate(dot(c, half3(0.2126h, 0.7152h, 0.0722h)));
+        }
+
         ENDHLSL
 
-
         // -----------------------------
-        // Depth prepass for transparency stability
+        // Depth prepass (DepthOnly)
         // -----------------------------
         Pass
         {
@@ -187,54 +197,43 @@ Shader "Pixel/CrystalToon_URP"
 
             half4 fragDepth(Varyings IN) : SV_Target
             {
-                clip(_DepthPrepass - 0.5);
+                if (_DepthPrepass < 0.5) discard;
                 return 0;
             }
             ENDHLSL
         }
 
+        // -----------------------------
+        // Crystal backfaces (interior)
+        // -----------------------------
         Pass
         {
             Name "CrystalBack"
             Tags { "LightMode"="CrystalBack" }
 
-            // Render backfaces only (interior).
             Cull Front
-
-            // Do not write depth to avoid sealing the interior.
             ZWrite Off
-
-            // Use current low-res depth (opaque depth) to prevent see-through.
             ZTest LEqual
-
             Blend SrcAlpha OneMinusSrcAlpha
 
             HLSLPROGRAM
             #pragma vertex vertBack
             #pragma fragment fragBack
 
-            // Shadow and additional light variants (trim if unused).
             #pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE
             #pragma multi_compile_fragment _ _SHADOWS_SOFT
             #pragma multi_compile_fragment _ _ADDITIONAL_LIGHTS
-            #pragma multi_compile_fragment _ _ADDITIONAL_LIGHT_SHADOWS
+            // 建议：不启用 additional light shadows，透明一般不需要
+            // #pragma multi_compile_fragment _ _ADDITIONAL_LIGHT_SHADOWS
 
-            // Match feature toggles with the main pass.
             #pragma shader_feature_local _CRYSTAL_TRIPLANAR
 
-            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
 
-            // Notes:
-            // - Do not include DeclareOpaqueTexture or SampleSceneColor to avoid double refraction.
-            // - This pass only adds interior contribution for backfaces.
-
-            // ---------- Same structure as the main pass ----------
             struct Attributes
             {
                 float4 positionOS : POSITION;
                 float3 normalOS   : NORMAL;
-                float2 uv         : TEXCOORD0;
             };
 
             struct Varyings
@@ -246,11 +245,9 @@ Shader "Pixel/CrystalToon_URP"
                 float4 shadowCoord : TEXCOORD3;
             };
 
-
             Varyings vertBack(Attributes IN)
             {
                 Varyings OUT;
-
                 VertexPositionInputs pos = GetVertexPositionInputs(IN.positionOS.xyz);
                 VertexNormalInputs   nor = GetVertexNormalInputs(IN.normalOS);
 
@@ -258,10 +255,7 @@ Shader "Pixel/CrystalToon_URP"
                 OUT.positionWS = pos.positionWS;
                 OUT.normalWS   = normalize(nor.normalWS);
                 OUT.viewDirWS  = GetWorldSpaceViewDir(pos.positionWS);
-
-                // Allow interior faces to receive main light shadows (optional).
                 OUT.shadowCoord = GetShadowCoord(pos);
-
                 return OUT;
             }
 
@@ -269,73 +263,70 @@ Shader "Pixel/CrystalToon_URP"
             {
                 half3 V = normalize(IN.viewDirWS);
 
-                // Backface pass still uses outward normals.
-                // Flip normals so the interior faces light toward the camera.
+                // flip outward normal for interior lighting
                 half3 N = -normalize(IN.normalWS);
 
                 half NoV = saturate(dot(N, V));
+                half invNoV = saturate(1.0h - NoV);
 
-                // ---------- Thickness approximation (grazing is thicker) ----------
-                half thicknessT = pow(1.0h - NoV, _ThicknessPower);
+                // thickness
+                half thicknessT = pow(invNoV, _ThicknessPower);
                 half thickness  = lerp(_ThicknessMin, _ThicknessMax, thicknessT);
 
-                // ---------- Beer-Lambert absorption (deeper interior) ----------
+                // absorption
                 half3 absorption    = _AbsorptionColor.rgb * _AbsorptionDensity;
                 half3 transmittance = exp(-absorption * thickness);
 
-                // ---------- Interior facets ----------
-                half facetNoise;
-                #if defined(_CRYSTAL_TRIPLANAR)
-                    facetNoise = SampleFacetTriplanar((float3)IN.positionWS, (float3)N);
-                #else
-                    float2 facetUV = IN.positionWS.xz * _FacetScale;
-                    facetNoise = SAMPLE_TEXTURE2D(_FacetMap, sampler_FacetMap, facetUV).r;
-                #endif
+                // facet (early out)
+                half facet = 0;
+                if (_FacetStrength > 1e-3)
+                {
+                    half facetNoise;
+                    #if defined(_CRYSTAL_TRIPLANAR)
+                        facetNoise = SampleFacetTriplanar((float3)IN.positionWS, (float3)N);
+                    #else
+                        float2 facetUV = IN.positionWS.xz * _FacetScale;
+                        facetNoise = SAMPLE_TEXTURE2D(_FacetMap, sampler_FacetMap, facetUV).r;
+                    #endif
 
-                half facet = pow(saturate(facetNoise), _FacetSharpness) * _FacetStrength;
+                    facet = PowFast01(saturate(facetNoise), _FacetSharpness) * _FacetStrength;
+                }
 
-                // ---------- Main light (interior diffuse + shadows) ----------
+                // main light
                 Light mainLight = GetMainLight(IN.shadowCoord);
                 half3 L = normalize(mainLight.direction);
+                half ndl = saturate(dot(N, L));
+                half ramp = ToonRamp(ndl, _Steps, _RampSmooth);
+                half sh = mainLight.shadowAttenuation;
 
-                half ndl   = saturate(dot(N, L));
-                half ramp  = ToonRamp(ndl, _Steps, _RampSmooth);
-                half shadowAtten = mainLight.shadowAttenuation;
+                half3 diffuse = _BaseColor.rgb * ramp * mainLight.color * sh;
 
-                // Interior diffuse favors internal glow; avoid _ShadowTint to keep it clean.
-                half3 diffuse = _BaseColor.rgb * ramp * mainLight.color * shadowAtten;
-
-                // ---------- Interior specular (thresholded edge sparkle) ----------
+                // spec
                 half3 H = normalize(L + V);
                 half specRaw = pow(saturate(dot(N, H)), _SpecPower);
                 half spec    = step(_SpecThreshold, specRaw);
-                half3 specular = spec * _SpecColor.rgb * mainLight.color * shadowAtten;
+                half3 specular = spec * _SpecColor.rgb * mainLight.color * sh;
 
-                // ---------- Interior rim (makes backface silhouette visible) ----------
-                half rimRaw = pow(1.0h - NoV, _RimPower);
+                // rim
+                half rimRaw = pow(invNoV, _RimPower);
                 half rim    = step(_RimThreshold, rimRaw);
                 half3 rimCol = rim * _RimColor.rgb * mainLight.color;
 
-                // ---------- Composite: diffuse + facets + specular + rim ----------
-                // Transmittance darkens thicker regions for a crystal look.
+                // composite
                 half3 internalCol = diffuse * transmittance;
-
-                // Facet sparkle is less attenuated to keep bright flecks.
-                internalCol += facet * _BaseColor.rgb * (0.35h + 0.65h * shadowAtten) * mainLight.color;
-
+                internalCol += facet * _BaseColor.rgb * (0.35h + 0.65h * sh) * mainLight.color;
                 internalCol += (specular + rimCol) * (0.5h + 0.5h * facet);
 
-                // ---------- Alpha: interior contribution scales with transparency ----------
-                // Lower _Opacity (more transparent) makes the interior stronger.
-                half alpha = saturate((1.0h - _Opacity) * 0.85h);
-                // Boost interior presence at grazing angles.
-                alpha = saturate(alpha + (1.0h - NoV) * 0.15h);
+                // ---- Alpha semantics (更直觉) ----
+                // _Opacity 越高整体越不透明 => interior 越弱
+                half alphaOut = saturate(_Opacity);
+                half interiorAlpha = (1.0h - alphaOut);
+                interiorAlpha *= saturate(0.85h + invNoV * 0.15h);
 
-                return half4(internalCol, alpha);
+                return half4(internalCol, interiorAlpha);
             }
             ENDHLSL
         }
-
 
         // -----------------------------
         // Forward pass
@@ -352,19 +343,18 @@ Shader "Pixel/CrystalToon_URP"
             HLSLPROGRAM
             #pragma vertex vert
             #pragma fragment frag
-            #pragma multi_compile_fog
 
             #pragma multi_compile _ _MAIN_LIGHT_SHADOWS _MAIN_LIGHT_SHADOWS_CASCADE
             #pragma multi_compile_fragment _ _SHADOWS_SOFT
             #pragma multi_compile_fragment _ _ADDITIONAL_LIGHTS
-            #pragma multi_compile_fragment _ _ADDITIONAL_LIGHT_SHADOWS
+            // #pragma multi_compile_fragment _ _ADDITIONAL_LIGHT_SHADOWS
 
             #pragma shader_feature_local _CRYSTAL_ABERRATION
             #pragma shader_feature_local _CRYSTAL_TRIPLANAR
             #pragma shader_feature_local _CRYSTAL_USE_SCENECOLOR
 
-
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
+            // SampleSceneColor 需要 OpaqueTexture 支持；保留 include，但通过 keyword 控制是否真的采样
             #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/DeclareOpaqueTexture.hlsl"
             #include "Packages/com.unity.render-pipelines.core/ShaderLibrary/ImageBasedLighting.hlsl"
 
@@ -372,28 +362,24 @@ Shader "Pixel/CrystalToon_URP"
             {
                 float4 positionOS : POSITION;
                 float3 normalOS   : NORMAL;
-                float2 uv         : TEXCOORD0;
             };
 
             struct Varyings
             {
                 float4 positionCS  : SV_POSITION;
-                float2 uv          : TEXCOORD0;
-                float4 screenPos   : TEXCOORD1;
-                float3 normalWS    : TEXCOORD2;
-                float3 viewDirWS   : TEXCOORD3;
-                float3 positionWS  : TEXCOORD4;
-                float4 shadowCoord : TEXCOORD5;
-                half   fogFactor   : TEXCOORD6;
+                float4 screenPos   : TEXCOORD0;
+                float3 normalWS    : TEXCOORD1;
+                float3 viewDirWS   : TEXCOORD2;
+                float3 positionWS  : TEXCOORD3;
+                float4 shadowCoord : TEXCOORD4;
             };
 
-            // -------- Core: unified toon evaluation for multiple lights --------
             void EvaluateToonLight(
                 Light li,
                 half3 N,
                 half3 V,
-                half3 baseTint,              // _BaseColor.rgb
-                half  isAdditional,          // 0=main, 1=additional
+                half3 baseTint,
+                half  isAdditional,
                 out half3 diffuseOut,
                 out half3 specOut,
                 out half3 rimOut
@@ -401,27 +387,21 @@ Shader "Pixel/CrystalToon_URP"
             {
                 half3 L = normalize(li.direction);
 
-                // Diffuse band
                 half ndl  = saturate(dot(N, L));
                 half ramp = ToonRamp(ndl, (half)_Steps, (half)_RampSmooth);
 
-                // Shadow blend (stable and controllable).
-                // shadowAttenuation: 1=lit, 0=shadow.
                 half sh = (half)li.shadowAttenuation;
-                half shadowAmount = (1.0h - sh) * (half)_ShadowDarkness;  // 0..ShadowDarkness
+                half shadowAmount = (1.0h - sh) * (half)_ShadowDarkness;
 
-                // Point/spot attenuation via distanceAttenuation.
                 half atten = (half)li.distanceAttenuation;
-                // Main light distance attenuation is usually 1.
                 half lightScale = lerp(1.0h, (half)_AdditionalIntensity, isAdditional);
 
-                half3 litCol    = baseTint * ramp;                 // toon lit
-                half3 shadowCol = litCol * (half3)_ShadowTint.rgb; // tinted shadow
+                half3 litCol    = baseTint * ramp;
+                half3 shadowCol = litCol * (half3)_ShadowTint.rgb;
                 half3 diff      = lerp(litCol, shadowCol, shadowAmount);
 
                 diffuseOut = diff * (half3)li.color * atten * lightScale;
 
-                // Specular (banded)
                 half3 H = normalize(L + V);
                 half spRaw  = pow(saturate(dot(N, H)), (half)_SpecPower);
                 half spBand = step((half)_SpecThreshold, spRaw);
@@ -429,18 +409,13 @@ Shader "Pixel/CrystalToon_URP"
                 half specMul = lerp(1.0h, (half)_AdditionalSpecMul, isAdditional);
                 specOut = spBand * (half3)_SpecColor.rgb * (half3)li.color * sh * atten * lightScale * specMul;
 
-                // Rim (banded) is view-based but keeps light color/attenuation.
                 half NoV = saturate(dot(N, V));
-                half rimRaw  = pow(1.0h - NoV, (half)_RimPower);
+                half invNoV = saturate(1.0h - NoV);
+                half rimRaw  = pow(invNoV, (half)_RimPower);
                 half rimBand = step((half)_RimThreshold, rimRaw);
 
                 half rimMul = lerp(1.0h, (half)_AdditionalRimMul, isAdditional);
                 rimOut = rimBand * (half3)_RimColor.rgb * (half3)li.color * atten * lightScale * rimMul;
-            }
-            half LightEnergy01(half3 c)
-            {
-                // Simple luminance estimate.
-                return saturate(dot(c, half3(0.2126h, 0.7152h, 0.0722h)));
             }
 
             Varyings vert(Attributes IN)
@@ -451,12 +426,10 @@ Shader "Pixel/CrystalToon_URP"
 
                 OUT.positionCS  = pos.positionCS;
                 OUT.positionWS  = pos.positionWS;
-                OUT.uv          = TRANSFORM_TEX(IN.uv, _BaseMap);
                 OUT.normalWS    = normalize(nor.normalWS);
                 OUT.viewDirWS   = GetWorldSpaceViewDir(pos.positionWS);
                 OUT.screenPos   = ComputeScreenPos(OUT.positionCS);
                 OUT.shadowCoord = GetShadowCoord(pos);
-                OUT.fogFactor   = ComputeFogFactor(OUT.positionCS.z);
                 return OUT;
             }
 
@@ -467,51 +440,53 @@ Shader "Pixel/CrystalToon_URP"
 
                 float2 screenUV = IN.screenPos.xy / max(IN.screenPos.w, 1e-5);
 
-                // -----------------------------
-                // 1) Refraction (Scene Color)
-                // -----------------------------
-                float2 refractOffset = (float2)N.xy * _RefractionStrength;
-
-                half3 refractedColor;
-                #if defined(_CRYSTAL_ABERRATION)
-                    half r = SampleSceneColor(screenUV + refractOffset).r;
-                    half g = SampleSceneColor(screenUV + refractOffset * (1.0 + _ChromaticAberration)).g;
-                    half b = SampleSceneColor(screenUV + refractOffset * (1.0 + _ChromaticAberration * 2.0)).b;
-                    refractedColor = half3(r, g, b);
-                #else
-                    refractedColor = SampleSceneColor(screenUV + refractOffset);
-                #endif
-
-                // -----------------------------
-                // 2) Internal facets
-                // -----------------------------
-                half facetNoise;
-                #if defined(_CRYSTAL_TRIPLANAR)
-                    facetNoise = SampleFacetTriplanar((float3)IN.positionWS, (float3)N);
-                #else
-                    float2 facetUV = (IN.positionWS.xz) * _FacetScale;
-                    facetNoise = SAMPLE_TEXTURE2D(_FacetMap, sampler_FacetMap, facetUV).r;
-                #endif
-                half facet = pow(saturate(facetNoise), _FacetSharpness) * _FacetStrength;
-
-                // -----------------------------
-                // 3) Fresnel + Absorption
-                // -----------------------------
                 half NoV = saturate(dot(N, V));
-                half fresnel = pow(1.0h - NoV, _FresnelPower) * _FresnelStrength;
+                half invNoV = saturate(1.0h - NoV);
 
-                half thicknessT = pow(1.0h - NoV, _ThicknessPower);
+                // 1) Refraction (keyword-gated)
+                half3 refractedColor = _BaseColor.rgb;
+                #if defined(_CRYSTAL_USE_SCENECOLOR)
+                {
+                    float2 refractOffset = (float2)N.xy * _RefractionStrength;
+
+                    #if defined(_CRYSTAL_ABERRATION)
+                        half r = SampleSceneColor(screenUV + refractOffset).r;
+                        half g = SampleSceneColor(screenUV + refractOffset * (1.0 + _ChromaticAberration)).g;
+                        half b = SampleSceneColor(screenUV + refractOffset * (1.0 + _ChromaticAberration * 2.0)).b;
+                        refractedColor = half3(r, g, b);
+                    #else
+                        refractedColor = SampleSceneColor(screenUV + refractOffset);
+                    #endif
+                }
+                #endif
+
+                // 2) Facets (early out)
+                half facet = 0;
+                if (_FacetStrength > 1e-3)
+                {
+                    half facetNoise;
+                    #if defined(_CRYSTAL_TRIPLANAR)
+                        facetNoise = SampleFacetTriplanar((float3)IN.positionWS, (float3)N);
+                    #else
+                        float2 facetUV = (IN.positionWS.xz) * _FacetScale;
+                        facetNoise = SAMPLE_TEXTURE2D(_FacetMap, sampler_FacetMap, facetUV).r;
+                    #endif
+
+                    facet = PowFast01(saturate(facetNoise), _FacetSharpness) * _FacetStrength;
+                }
+
+                // 3) Fresnel + Absorption
+                half fresnel = pow(invNoV, _FresnelPower) * _FresnelStrength;
+
+                half thicknessT = pow(invNoV, _ThicknessPower);
                 half thickness  = lerp(_ThicknessMin, _ThicknessMax, thicknessT);
 
                 half3 absorption    = _AbsorptionColor.rgb * _AbsorptionDensity;
                 half3 transmittance = exp(-absorption * thickness);
 
-                // -----------------------------
-                // 4) Lighting: main + additional (unified).
-                // -----------------------------
+                // 4) Lighting: main + additional
                 half3 baseTint = (half3)_BaseColor.rgb;
 
-                // Main
                 Light mainLight = GetMainLight(IN.shadowCoord);
                 half3 diffM, specM, rimM;
                 EvaluateToonLight(mainLight, N, V, baseTint, 0.0h, diffM, specM, rimM);
@@ -533,47 +508,39 @@ Shader "Pixel/CrystalToon_URP"
                 #endif
 
                 half3 surfaceLit = (diffM + diffA) + (specM + specA) + (rimM + rimA);
-                half lightE = LightEnergy01(surfaceLit);          // 0..1
-                // Optional: make it harder.
-                lightE = step(0.02h, lightE);  
-                refractedColor *= lightE;     // No light -> perceived black (no background bleed).
-                // -----------------------------
-                // 5) Env reflection (IBL)
-                // -----------------------------
+
+                // 5) Light gate (smooth, no flicker)
+                half lightE = LightEnergy01(surfaceLit);
+                half lightGate = smoothstep(0.01h, 0.05h, lightE);
+
+                refractedColor *= lightGate;
+
+                // 6) Env reflection
                 half3 R = reflect(-V, N);
                 half perceptualRoughness = saturate(_Roughness);
                 half3 envRefl = GlossyEnvironmentReflection(R, perceptualRoughness, 1.0h);
                 envRefl *= (_ReflectionStrength * saturate(fresnel));
-                envRefl        *= lightE;     // No light -> no reflection.
-                // -----------------------------
-                // 6) Internal facet sparkle (lightweight).
-                // -----------------------------
-                // Drive with overall light energy (avoid only main light).
+                envRefl *= lightGate;
+
+                // 7) Internal facet sparkle (cheap)
                 half3 approxLightColor = (half3)mainLight.color;
                 #if defined(_ADDITIONAL_LIGHTS)
-                    approxLightColor += 0.25h; // Small lift to avoid darkness with zero lights.
+                    approxLightColor += 0.25h;
                 #endif
                 half3 internalFacet = facet * baseTint * approxLightColor;
-                internalFacet  *= lightE;     // No light -> no sparkle.
-                // -----------------------------
-                // 7) Composite
-                // -----------------------------
-                // Surface/refraction mix (_Opacity is the surface weight).
-                half3 baseMix = lerp(refractedColor, surfaceLit, (half)_Opacity);
+                internalFacet *= lightGate;
 
-                // Absorption (approximate).
+                // 8) Composite
+                half3 baseMix = lerp(refractedColor, surfaceLit, (half)_SurfaceWeight);
                 half3 absorbed = baseMix * transmittance;
+                
 
-                // Add reflection + facets.
                 half3 finalRGB = absorbed + envRefl + internalFacet;
 
-                // Alpha output: for true transparency, bind alpha to _Opacity.
-                // If you want visual transparency but alpha=1, set it to 1.
+                // True transparency
                 half alphaOut = saturate((half)_Opacity);
 
-                half4 outCol = half4(finalRGB, alphaOut);
-                outCol.rgb = MixFog(outCol.rgb, IN.fogFactor);
-                return outCol;
+                return half4(finalRGB, alphaOut);
             }
             ENDHLSL
         }
